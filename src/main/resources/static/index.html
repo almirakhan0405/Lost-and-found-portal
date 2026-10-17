@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Lost &amp; Found Portal</title>
+<style>
+  :root { --bg:#f5f6fa; --card:#fff; --ink:#1d2433; --muted:#6b7385; --line:#e3e6ee; --brand:#2f5bea;
+          --lost:#d9480f; --found:#2b8a3e; --warn:#b42318; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--brand); color:#fff; }
+  .wrap { max-width:980px; margin:0 auto; padding:0 16px; }
+  .top { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px 0 8px; flex-wrap:wrap; }
+  h1 { margin:0; font-size:1.35rem; }
+  .sub { opacity:.85; font-size:.9rem; }
+  nav { display:flex; gap:4px; overflow-x:auto; padding-bottom:0; }
+  nav button { background:transparent; color:#dbe4ff; border:0; padding:10px 14px; font-size:.95rem; cursor:pointer;
+               border-bottom:3px solid transparent; white-space:nowrap; }
+  nav button.on { color:#fff; border-bottom-color:#fff; font-weight:600; }
+  main { padding:20px 16px 40px; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(105px,1fr)); gap:10px; margin-bottom:16px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .stat b { display:block; font-size:1.35rem; } .stat span { color:var(--muted); font-size:.8rem; }
+  .bar { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  input, select, textarea { padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; background:#fff; width:100%; }
+  .bar input { flex:1 1 220px; width:auto; } .bar select { width:auto; }
+  label { display:block; font-size:.85rem; color:var(--muted); margin:12px 0 4px; }
+  button.btn { background:var(--brand); color:#fff; border:0; border-radius:8px; padding:9px 16px; font:inherit; cursor:pointer; }
+  button.btn.ghost { background:#eef1fb; color:var(--brand); }
+  button.btn.red { background:var(--warn); }
+  button.btn.green { background:var(--found); }
+  button.btn:disabled { opacity:.5; }
+  .item { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:10px; }
+  .item h3 { margin:0 0 4px; font-size:1.05rem; }
+  .meta { color:var(--muted); font-size:.87rem; margin-top:4px; }
+  .tag { display:inline-block; padding:2px 9px; border-radius:20px; font-size:.74rem; font-weight:600; color:#fff; margin-right:8px; }
+  .LOST { background:var(--lost); } .FOUND { background:var(--found); }
+  .pill { float:right; font-size:.78rem; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:1px 9px; }
+  .pill.PENDING, .pill.CLAIMED { color:#a15c00; border-color:#f1c27d; } .pill.APPROVED, .pill.RETURNED { color:var(--found); border-color:#9bd3a8; }
+  .pill.REJECTED { color:var(--warn); border-color:#f0aaa3; }
+  .actions { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
+  .empty { text-align:center; color:var(--muted); padding:36px 0; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:6px 20px 20px; max-width:620px; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; } @media (max-width:520px) { .row2 { grid-template-columns:1fr; } }
+  h2 { font-size:1.15rem; margin:4px 0 8px; }
+  .new { background:#eef3ff; border-color:#c7d5ff; }
+  dialog { border:0; border-radius:14px; padding:20px 22px; width:min(480px,94vw); box-shadow:0 12px 40px rgba(0,0,0,.25); }
+  dialog::backdrop { background:rgba(15,20,35,.5); }
+  .err { color:var(--warn); font-size:.9rem; min-height:1.2em; margin-top:10px; }
+  .toast { position:fixed; left:50%; bottom:22px; transform:translateX(-50%); background:#1d2433; color:#fff; padding:10px 18px;
+           border-radius:24px; font-size:.92rem; opacity:0; transition:opacity .25s; pointer-events:none; max-width:90vw; }
+  .toast.show { opacity:1; }
+  .badge { background:#ff5a3c; color:#fff; border-radius:10px; font-size:.72rem; padding:1px 7px; margin-left:5px; }
+  footer { text-align:center; color:var(--muted); font-size:.82rem; padding:20px; }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="top">
+    <div><h1>Smart Lost &amp; Found Portal</h1><div class="sub">Report it. Match it. Return it.</div></div>
+    <div id="account"></div>
+  </div>
+  <nav id="nav"></nav>
+</div></header>
+
+<main class="wrap" id="view"></main>
+<footer>Open REST API: <a href="/api/items">/api/items</a> · <a href="/api/stats">/api/stats</a></footer>
+
+<dialog id="dlg"></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = { me: null, categories: [], tab: 'browse' };
+
+/* ---------- tiny helpers ---------- */
+function el(tag, props, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== null) e[k] = v;       // text goes in as text, never as HTML
+  }
+  for (const kid of kids.flat()) if (kid != null) e.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return e;
+}
+async function api(path, opts = {}) {
+  const res = await fetch('/api' + path, {
+    method: opts.method || 'GET', credentials: 'same-origin',
+    headers: opts.body ? { 'Content-Type': 'application/json' } : undefined,
+    body: opts.body ? JSON.stringify(opts.body) : undefined });
+  let data = null; try { data = await res.json(); } catch (_) {}
+  if (!res.ok) { const err = new Error((data && data.error) || 'Something went wrong (' + res.status + ')'); err.status = res.status; throw err; }
+  return data;
+}
+let toastTimer;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3200); }
+const fmt = s => s ? new Date(s).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '';
+
+function openDialog(...content) { const d = $('#dlg'); d.replaceChildren(...content); if (!d.open) d.showModal(); return d; }
+function closeDialog() { const d = $('#dlg'); if (d.open) d.close(); }
+
+/* ---------- account bar + nav ---------- */
+function renderChrome(unread = 0) {
+  const acc = $('#account'); acc.replaceChildren();
+  if (state.me) {
+    acc.append(el('span', { class: 'sub' }, state.me.fullName + (state.me.role === 'ADMIN' ? ' (admin) ' : ' ')),
+      el('button', { class: 'btn ghost', onclick: logout }, 'Log out'));
+  } else {
+    acc.append(el('button', { class: 'btn ghost', onclick: () => authDialog('login') }, 'Sign in / Register'));
+  }
+  const tabs = [['browse', 'Browse'], ['report', 'Report an item'], ['mine', 'My items'], ['claims', 'Claims'], ['notes', 'Notifications']];
+  const nav = $('#nav'); nav.replaceChildren();
+  for (const [id, label] of tabs) {
+    const b = el('button', { class: state.tab === id ? 'on' : '', onclick: () => go(id) }, label);
+    if (id === 'notes' && unread > 0) b.append(el('span', { class: 'badge' }, unread));
+    nav.append(b);
+  }
+}
+async function refreshBadge() {
+  if (!state.me) return renderChrome(0);
+  try { const n = await api('/notifications'); renderChrome(n.unread); } catch (_) { renderChrome(0); }
+}
+
+function go(tab) {
+  if (tab !== 'browse' && !state.me) { authDialog('login', () => go(tab)); return; }
+  state.tab = tab; refreshBadge();
+  ({ browse: viewBrowse, report: viewReport, mine: viewMine, claims: viewClaims, notes: viewNotes })[tab]();
+}
+
+/* ---------- sign in / register ---------- */
+function authDialog(mode, then) {
+  const err = el('div', { class: 'err' });
+  const user = el('input', { autocomplete: 'username' }), pass = el('input', { type: 'password', autocomplete: 'current-password' });
+  const name = el('input'), mail = el('input', { type: 'email' });
+  const reg = mode === 'register';
+  const submit = async () => {
+    try {
+      state.me = await api(reg ? '/auth/register' : '/auth/login',
+        { method: 'POST', body: reg ? { username: user.value, fullName: name.value, email: mail.value, password: pass.value }
+                                    : { username: user.value, password: pass.value } });
+      closeDialog(); toast('Welcome, ' + state.me.fullName + '!'); renderChrome(); if (then) then(); else go(state.tab);
+    } catch (e) { err.textContent = e.message; }
+  };
+  pass.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  openDialog(
+    el('h2', null, reg ? 'Create account' : 'Sign in'),
+    el('label', null, 'Username'), user,
+    reg ? [el('label', null, 'Full name'), name, el('label', null, 'Email'), mail] : null,
+    el('label', null, 'Password'), pass, err,
+    el('div', { class: 'actions' },
+      el('button', { class: 'btn', onclick: submit }, reg ? 'Create account' : 'Sign in'),
+      el('button', { class: 'btn ghost', onclick: () => authDialog(reg ? 'login' : 'register', then) }, reg ? 'I have an account' : 'New here? Register'),
+      el('button', { class: 'btn ghost', onclick: closeDialog }, 'Cancel')),
+    reg ? null : el('div', { class: 'meta' }, 'Demo: student1 / pass123'));
+  user.focus();
+}
+async function logout() { await api('/auth/logout', { method: 'POST' }); state.me = null; state.tab = 'browse'; renderChrome(); viewBrowse(); }
+
+/* ---------- item cards ---------- */
+function itemCard(i, extra) {
+  const card = el('div', { class: 'item' },
+    el('span', { class: 'pill ' + i.status }, i.status),
+    el('h3', null, el('span', { class: 'tag ' + i.type }, i.type), i.title),
+    i.description ? el('div', null, i.description) : null,
+    el('div', { class: 'meta' }, [i.category, i.location, i.eventDate, 'by ' + i.reportedBy].join(' · ')));
+  const actions = el('div', { class: 'actions' });
+  if (extra) extra(actions, i);
+  if (actions.children.length) card.append(actions);
+  return card;
+}
+async function showMatches(i) {
+  try {
+    const ms = await api('/items/' + i.id + '/matches');
+    openDialog(el('h2', null, 'Likely matches for "' + i.title + '"'),
+      ms.length ? ms.map(m => itemCard(m.item).appendChild(el('div', { class: 'meta' }, m.score + '% match: ' + m.reasons.join(', '))).parentNode)
+                : el('div', { class: 'empty' }, 'No likely matches yet. You will be notified when one appears.'),
+      el('div', { class: 'actions' }, el('button', { class: 'btn ghost', onclick: closeDialog }, 'Close')));
+  } catch (e) { toast(e.message); }
+}
+function claimDialog(i) {
+  const found = i.type === 'FOUND';
+  const msg = el('textarea', { rows: 4 }), ans = el('input'), err = el('div', { class: 'err' });
+  openDialog(
+    el('h2', null, found ? 'Claim "' + i.title + '"' : 'I found "' + i.title + '"'),
+    el('label', null, found ? 'Why is it yours?' : 'Where is it now / how can the owner reach you?'), msg,
+    found && i.verificationQuestion ? [el('label', null, 'Verification: ' + i.verificationQuestion), ans] : null, err,
+    el('div', { class: 'actions' },
+      el('button', { class: 'btn', onclick: async () => {
+        try { await api('/items/' + i.id + '/claim', { method: 'POST', body: { message: msg.value, answer: ans.value } });
+              closeDialog(); toast('Sent to ' + i.reportedBy + '.'); viewBrowse(); }
+        catch (e) { err.textContent = e.message; } } }, 'Send'),
+      el('button', { class: 'btn ghost', onclick: closeDialog }, 'Cancel')));
+}
+
+/* ---------- Browse (public) ---------- */
+async function viewBrowse() {
+  const v = $('#view'); const stats = el('div', { class: 'stats' }); const list = el('div');
+  const q = el('input', { type: 'search', placeholder: "Search (typos are fine): 'dell lapto bag'" });
+  const type = el('select', null, el('option', { value: '' }, 'Lost & Found'), el('option', null, 'LOST'), el('option', null, 'FOUND'));
+  const status = el('select', null, el('option', { value: '' }, 'Any status'), el('option', null, 'OPEN'), el('option', null, 'CLAIMED'), el('option', null, 'RETURNED'));
+  const cat = el('select', null, el('option', { value: '' }, 'All categories'), state.categories.map(c => el('option', { value: c.value }, c.label)));
+  v.replaceChildren(stats, el('div', { class: 'bar' }, q, type, cat, status), list);
+
+  async function load() {
+    const s = await api('/stats'); stats.replaceChildren();
+    for (const [k, n] of Object.entries(s)) stats.append(el('div', { class: 'stat' }, el('b', null, n), el('span', null, k)));
+    const p = new URLSearchParams();
+    if (q.value.trim()) p.set('q', q.value.trim()); if (type.value) p.set('type', type.value);
+    if (cat.value) p.set('category', cat.value); if (status.value) p.set('status', status.value);
+    const items = await api('/items?' + p); list.replaceChildren();
+    if (!items.length) { list.append(el('div', { class: 'empty' }, 'No items match your search.')); return; }
+    for (const i of items) list.append(itemCard(i, (box, it) => {
+      box.append(el('button', { class: 'btn ghost', onclick: () => showMatches(it) }, 'Smart matches'));
+      if (it.status !== 'RETURNED' && !(state.me && state.me.id === it.reporterId))
+        box.append(el('button', { class: 'btn', onclick: () => state.me ? claimDialog(it) : authDialog('login', () => claimDialog(it)) },
+          it.type === 'FOUND' ? 'This is mine' : 'I found this'));
+    }));
+  }
+  let t; [q, type, cat, status].forEach(c => c.addEventListener('input', () => { clearTimeout(t); t = setTimeout(load, 200); }));
+  await load();
+}
+
+/* ---------- Report ---------- */
+function viewReport() {
+  const today = new Date().toISOString().slice(0, 10);
+  const type = el('select', null, el('option', { value: 'LOST' }, 'I lost something'), el('option', { value: 'FOUND' }, 'I found something'));
+  const title = el('input', { placeholder: 'e.g. Black Dell laptop bag' });
+  const cat = el('select', null, state.categories.map(c => el('option', { value: c.value }, c.label)));
+  const loc = el('input', { placeholder: 'e.g. Library 2nd floor' });
+  const date = el('input', { type: 'date', value: today, max: today });
+  const desc = el('textarea', { rows: 4, placeholder: 'Colour, brand, marks, what is inside...' });
+  const q = el('input', { placeholder: 'e.g. What is on the lock screen?' }), a = el('input');
+  const finderBox = el('div', null, el('label', null, 'Verification question (private check for the real owner)'), q, el('label', null, 'Correct answer'), a);
+  const err = el('div', { class: 'err' });
+  const sync = () => finderBox.style.display = type.value === 'FOUND' ? '' : 'none'; type.addEventListener('change', sync); sync();
+
+  const send = el('button', { class: 'btn', onclick: async () => {
+    send.disabled = true; err.textContent = '';
+    try {
+      const r = await api('/items', { method: 'POST', body: { type: type.value, title: title.value, category: cat.value, location: loc.value,
+        eventDate: date.value, description: desc.value, verificationQuestion: q.value, verificationAnswer: a.value } });
+      toast(r.matches.length ? 'Saved! ' + r.matches.length + ' likely match(es) found.' : 'Saved. We will notify you if a match appears.');
+      if (r.matches.length) openDialog(el('h2', null, 'Likely matches found!'),
+          r.matches.map(m => itemCard(m.item).appendChild(el('div', { class: 'meta' }, m.score + '% match: ' + m.reasons.join(', '))).parentNode),
+          el('div', { class: 'actions' }, el('button', { class: 'btn ghost', onclick: closeDialog }, 'Close')));
+      go('mine');
+    } catch (e) { err.textContent = e.message; } finally { send.disabled = false; }
+  } }, 'Submit report');
+
+  $('#view').replaceChildren(el('div', { class: 'panel' }, el('h2', { style: 'margin-top:16px' }, 'Report an item'),
+    el('label', null, 'Type'), type, el('label', null, 'Item name *'), title,
+    el('div', { class: 'row2' }, el('div', null, el('label', null, 'Category'), cat), el('div', null, el('label', null, 'Date'), date)),
+    el('label', null, 'Location *'), loc, el('label', null, 'Description'), desc, finderBox, err,
+    el('div', { class: 'actions' }, send)));
+}
+
+/* ---------- My items ---------- */
+async function viewMine() {
+  const v = $('#view'); v.replaceChildren(el('h2', null, 'My items'));
+  const items = await api('/my/items');
+  if (!items.length) v.append(el('div', { class: 'empty' }, 'You have not reported anything yet.'));
+  for (const i of items) v.append(itemCard(i, (box, it) => {
+    box.append(el('button', { class: 'btn ghost', onclick: () => showMatches(it) }, 'Find matches'));
+    if (it.status !== 'RETURNED') box.append(el('button', { class: 'btn green', onclick: async () => { await api('/items/' + it.id + '/status/RETURNED', { method: 'POST' }); viewMine(); } }, 'Mark as returned'));
+    else box.append(el('button', { class: 'btn ghost', onclick: async () => { await api('/items/' + it.id + '/status/OPEN', { method: 'POST' }); viewMine(); } }, 'Re-open'));
+    box.append(el('button', { class: 'btn red', onclick: async () => { if (confirm('Delete this report and its claims?')) { await api('/items/' + it.id, { method: 'DELETE' }); viewMine(); } } }, 'Delete'));
+  }));
+}
+
+/* ---------- Claims ---------- */
+async function viewClaims() {
+  const v = $('#view'); v.replaceChildren(el('h2', null, 'Claims on my items'));
+  const [inc, mine] = await Promise.all([api('/claims/incoming'), api('/claims/mine')]);
+  if (!inc.length) v.append(el('div', { class: 'empty' }, 'Nobody has claimed your items yet.'));
+  for (const c of inc) {
+    const card = el('div', { class: 'item' }, el('span', { class: 'pill ' + c.status }, c.status),
+      el('h3', null, c.itemTitle), el('div', null, c.claimant + ' (' + c.claimantEmail + '): ' + c.message),
+      c.expectedAnswer || c.answerGiven ? el('div', { class: 'meta' }, 'Their answer: "' + (c.answerGiven || '-') + '"  ·  Your answer: "' + (c.expectedAnswer || '-') + '"') : null,
+      el('div', { class: 'meta' }, fmt(c.createdAt)));
+    if (c.status === 'PENDING') card.append(el('div', { class: 'actions' },
+      el('button', { class: 'btn green', onclick: async () => { try { await api('/claims/' + c.id + '/approve', { method: 'POST' }); toast('Approved'); viewClaims(); } catch (e) { toast(e.message); } } }, 'Approve'),
+      el('button', { class: 'btn red', onclick: async () => { try { await api('/claims/' + c.id + '/reject', { method: 'POST' }); viewClaims(); } catch (e) { toast(e.message); } } }, 'Reject')));
+    v.append(card);
+  }
+  v.append(el('h2', { style: 'margin-top:28px' }, 'My claims'));
+  if (!mine.length) v.append(el('div', { class: 'empty' }, 'You have not claimed anything.'));
+  for (const c of mine) v.append(el('div', { class: 'item' }, el('span', { class: 'pill ' + c.status }, c.status),
+    el('h3', null, c.itemTitle), el('div', null, c.message), el('div', { class: 'meta' }, 'Reporter: ' + c.reporter + ' · ' + fmt(c.createdAt))));
+}
+
+/* ---------- Notifications ---------- */
+async function viewNotes() {
+  const v = $('#view'); const n = await api('/notifications');
+  v.replaceChildren(el('div', { class: 'actions', style: 'justify-content:space-between;align-items:center' },
+    el('h2', null, 'Notifications'),
+    el('button', { class: 'btn ghost', onclick: async () => { await api('/notifications/read', { method: 'POST' }); viewNotes(); refreshBadge(); } }, 'Mark all as read')));
+  if (!n.items.length) v.append(el('div', { class: 'empty' }, 'Nothing yet.'));
+  for (const x of n.items) v.append(el('div', { class: 'item' + (x.seen ? '' : ' new') }, el('div', null, x.message), el('div', { class: 'meta' }, fmt(x.createdAt))));
+}
+
+/* ---------- start ---------- */
+(async function init() {
+  try { state.categories = await api('/meta/categories'); state.me = (await api('/auth/me')).user; } catch (_) {}
+  renderChrome(); await refreshBadge(); await viewBrowse();
+  setInterval(() => { if (state.tab === 'browse' && !$('#dlg').open && document.activeElement.tagName !== 'INPUT') viewBrowse(); if (state.me) refreshBadge(); }, 20000);
+})();
+</script>
+</body>
+</html>
